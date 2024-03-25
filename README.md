@@ -117,3 +117,139 @@ render(app, document.querySelector("#root"));
 ### 第四步
 
 这一步通过 vite 的转换功能，将 jsx 转换为 React.createElement 的结构验证我们的代码逻辑
+
+## 第二天
+
+今天实现 fiber 的调度工作
+因为之前是通过递归执行调用，如果 dom 节点数据量特别大的时候会导致浏览器直接卡住，因为浏览器是单线程的，在 js 执行过程中无法去绘制视图
+
+1. 通过 requestIdleCallback 实现最小的调度器；
+2. 将 vdom 转换成 fiber 链表结构并且在调度器中实现视图的渲染
+
+### 第一步
+
+通过浏览器支持的 requestIdleCallback 函数进行空闲时间处理任务，不阻塞浏览器的主线程工作
+
+```js
+let taskID = 1;
+function workLoop(deadline) {
+  console.log("==== deadline", deadline.timeRemaining());
+  taskID++;
+
+  let shouldYeild = false;
+  while (!shouldYeild) {
+    // 执行任务
+    console.log("==== taskid", taskID);
+    // 当没有空闲之间了就切换到下一个task的空闲时间
+    shouldYeild = deadline.timeRemaining() < 1;
+  }
+
+  // 一直执行
+  //   requestIdleCallback(workLoop);
+}
+requestIdleCallback(workLoop);
+```
+
+### 第二步
+
+实现任务处理函数
+
+1. 创建 dom；
+2. 添加 props；
+3. vdom 转换为 fiber 链表；
+4. 返回下一个链表节点
+
+```js
+function render(el, container) {
+  nextWorkFiber = {
+    dom: container,
+    props: {
+      children: [el],
+    },
+  };
+}
+
+let nextWorkFiber = null;
+
+function createDOM(type) {
+  return type === "TEXT_ELEMENT"
+    ? document.createTextNode("")
+    : document.createElement(type);
+}
+
+function addProps(dom, props) {
+  Object.keys(props).forEach((key) => {
+    if (key !== "children") {
+      dom[key] = props[key];
+    }
+  });
+}
+
+function transformFiber(fiber) {
+  const children = fiber.props.children;
+  let prevChild = null;
+  children.forEach((child, index) => {
+    const newFiber = {
+      type: child.type,
+      props: child.props,
+      parent: fiber,
+      child: null,
+      sibling: null,
+      dom: null,
+    };
+    if (index === 0) {
+      fiber.child = newFiber;
+    } else {
+      prevChild.sibling = newFiber;
+    }
+    prevChild = child;
+  });
+}
+
+function returnNextFiber(fiber) {
+  if (fiber.child) {
+    return fiber.child;
+  }
+  if (fiber.sibling) {
+    return fiber.sibling;
+  }
+  return fiber.parent?.sibling;
+}
+
+function performWorkOfUnit(fiber) {
+  console.log("==== fiber", fiber);
+  // 1. 创建 dom；
+  if (!fiber.dom) {
+    fiber.dom = createDOM(fiber.type);
+    fiber.parent.dom.append(fiber.dom);
+  }
+
+  // 2. 添加 props；
+  addProps(fiber.dom, fiber.props);
+
+  // 3. vdom 转换为 fiber 链表；
+  transformFiber(fiber);
+
+  // 4. 返回下一个链表节点
+  return returnNextFiber(fiber);
+}
+
+function workLoop(deadline) {
+  let shouldYeild = false;
+  while (!shouldYeild && nextWorkFiber) {
+    nextWorkFiber = performWorkOfUnit(nextWorkFiber);
+    shouldYeild = deadline.timeRemaining() < 1;
+  }
+  requestIdleCallback(workLoop);
+}
+requestIdleCallback(workLoop);
+```
+
+### 思考
+
+如果是爷爷的兄弟才有数据呢？怎么返回爷爷的兄弟节点
+应该采用一个递归查找的方式去返回数据，直到查找到根节点
+
+## 第三天
+
+支持 functionComponent
